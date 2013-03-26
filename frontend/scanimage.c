@@ -37,6 +37,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdarg.h>
+#include <sys/time.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -47,7 +48,14 @@
 #include "../include/sane/sanei.h"
 #include "../include/sane/saneopts.h"
 
+#define BACKEND_NAME    plustek
+#include "../include/sane/sanei_access.h"
+#include "../include/sane/sanei_backend.h"
+#include "../include/sane/sanei_config.h"
+#include "../include/sane/sanei_thread.h"
+
 #include "stiff.h"
+
 
 #include "../include/md5.h"
 
@@ -58,6 +66,8 @@
 #ifndef HAVE_ATEXIT
 # define atexit(func)	on_exit(func, 0)	/* works for SunOS, at least */
 #endif
+
+#include "../backend/plustek.c"
 
 typedef struct
 {
@@ -141,6 +151,8 @@ static SANE_Word br_x = 0;
 static SANE_Word br_y = 0;
 static SANE_Byte *buffer;
 static size_t buffer_size;
+u_long img_width = 0;
+unsigned long img_height = 0;
 
 
 static void
@@ -311,6 +323,10 @@ auth_callback (SANE_String_Const resource,
 	       md5digest[12], md5digest[13], md5digest[14], md5digest[15]);
     }
 }
+/*forward declaration of write_pnm_header(), lazy and dangerou
+	because sighandler can be called at any point*/
+static void
+write_pnm_header (SANE_Frame format, int width, int height, int depth);
 
 static RETSIGTYPE
 sighandler (int signum)
@@ -323,7 +339,14 @@ sighandler (int signum)
       if (first_time)
 	{
 	  first_time = SANE_FALSE;
+		
+	  fprintf (stderr, "%s: writing header to end of file. \n"
+				"You need to manually move it to front or process accordingly.\n"
+				"In case you're curious, the numbers are %i %u.\n",
+					prog_name, img_width, img_height);
+		write_pnm_header(SANE_FRAME_RGB, img_width, img_height, 255);
 	  fprintf (stderr, "%s: trying to stop scanner\n", prog_name);
+		drvclose(device);
 	  sane_cancel (device);
 	}
       else
@@ -1185,8 +1208,7 @@ advance (Image * image)
 static SANE_Status
 scan_it (void)
 {
-  int i, len, first_frame = 1, offset = 0, must_buffer = 0, hundred_percent;
-  SANE_Byte min = 0xff, max = 0;
+  int i, len, first_frame = 1, offset = 0, must_buffer = 0;
   SANE_Parameters parm;
   SANE_Status status;
   Image image = { 0, 0, 0, 0, 0 };
@@ -1195,11 +1217,22 @@ scan_it (void)
   };
   SANE_Word total_bytes = 0, expected_bytes;
   SANE_Int hang_over = -1;
+	Plustek_Scanner *scanner = (Plustek_Scanner *)device;
+	Plustek_Device  *dev = scanner->hw;
+	ScanDef *scan = &dev->scanning;
 
-  do
-    {
+	status=usbDev_Prepare( scanner->hw, scanner->buf );
+	/*setup that would normally happen in reader_process(). Defining here to
+	 * avoid possiblity of goto cleanup changing definitions.
+	 */
+	fprintf(stderr,"calling usbDev_Prepare\n");
+	/* need to convert from line-wise RBG to byte-wise RGB */
+
+
+
       if (!first_frame)
 	{
+/*blerchin: this is duplicated for some reason... whatevs */
 #ifdef SANE_STATUS_WARMING_UP
           do
 	    {
@@ -1213,7 +1246,6 @@ scan_it (void)
 	    {
 	      fprintf (stderr, "%s: sane_start: %s\n",
 		       prog_name, sane_strstatus (status));
-	      goto cleanup;
 	    }
 	}
 
@@ -1222,7 +1254,6 @@ scan_it (void)
 	{
 	  fprintf (stderr, "%s: sane_get_parameters: %s\n",
 		   prog_name, sane_strstatus (status));
-	  goto cleanup;
 	}
 
       if (verbose)
@@ -1244,207 +1275,67 @@ scan_it (void)
 	  fprintf (stderr, "%s: acquiring %s frame\n", prog_name,
 	   parm.format <= SANE_FRAME_BLUE ? format_name[parm.format]:"Unknown");
 	}
+	img_width = parm.pixels_per_line;
+	u_long line_width = img_width + 2; /*2 status bytes at end */
+	u_long scan_lines = 24;
+	u_long scan_len = scan_lines*3*line_width;
+	u_char* scan_buf[scan_len];
+	u_char* rgb_line[img_width*3]; 
+	u_int throw_away = 4;
 
-      if (first_frame)
-	{
-	  switch (parm.format)
-	    {
-	    case SANE_FRAME_RED:
-	    case SANE_FRAME_GREEN:
-	    case SANE_FRAME_BLUE:
-	      assert (parm.depth == 8);
-	      must_buffer = 1;
-	      offset = parm.format - SANE_FRAME_RED;
-	      break;
+	u_long offset_r = 0;
+	u_long offset_g =	line_width;
+	u_long offset_b =  line_width * 2;
 
-	    case SANE_FRAME_RGB:
-	      assert ((parm.depth == 8) || (parm.depth == 16));
-	    case SANE_FRAME_GRAY:
-	      assert ((parm.depth == 1) || (parm.depth == 8)
-		      || (parm.depth == 16));
-	      if (parm.lines < 0)
-		{
-		  must_buffer = 1;
-		  offset = 0;
-		}
-	      else
-		{
-		  if (output_format == OUTPUT_TIFF)
-		    sanei_write_tiff_header (parm.format,
-					     parm.pixels_per_line, parm.lines,
-					     parm.depth, resolution_value,
-					     icc_profile);
-		  else
-		    write_pnm_header (parm.format, parm.pixels_per_line,
-				      parm.lines, parm.depth);
-		}
-	      break;
-
-            default:
-	      break;
-	    }
-
-	  if (must_buffer)
-	    {
-	      /* We're either scanning a multi-frame image or the
-		 scanner doesn't know what the eventual image height
-		 will be (common for hand-held scanners).  In either
-		 case, we need to buffer all data before we can write
-		 the image.  */
-	      image.width = parm.bytes_per_line;
-
-	      if (parm.lines >= 0)
-		/* See advance(); we allocate one extra line so we
-		   don't end up realloc'ing in when the image has been
-		   filled in.  */
-		image.height = parm.lines - STRIP_HEIGHT + 1;
-	      else
-		image.height = 0;
-
-	      image.x = image.width - 1;
-	      image.y = -1;
-	      if (!advance (&image))
-		{
-		  status = SANE_STATUS_NO_MEM;
-		  goto cleanup;
-		}
-	    }
-	}
-      else
-	{
-	  assert (parm.format >= SANE_FRAME_RED
-		  && parm.format <= SANE_FRAME_BLUE);
-	  offset = parm.format - SANE_FRAME_RED;
-	  image.x = image.y = 0;
-	}
-      hundred_percent = parm.bytes_per_line * parm.lines 
-	* ((parm.format == SANE_FRAME_RGB || parm.format == SANE_FRAME_GRAY) ? 1:3);
-
+	/* throw away one block */
       while (1)
 	{
-	  double progr;
-	  status = sane_read (device, buffer, buffer_size, &len);
-	  total_bytes += (SANE_Word) len;
-          progr = ((total_bytes * 100.) / (double) hundred_percent);
-          if (progr > 100.)
-	    progr = 100.;
-          if (progress)
-	    fprintf (stderr, "Progress: %3.1f%%\r", progr);
+	/* the important bit */
+
+
+			status = sanei_lm983x_read(
+							dev->fd,
+							0x00,  
+							(SANE_Byte *)scan_buf,// + ( y*img_width),
+							(SANE_Word)  scan_len,
+							SANE_FALSE);
+							fprintf(stderr,"read %lu bytes\n", scan_len);
 
 	  if (status != SANE_STATUS_GOOD)
 	    {
-	      if (verbose && parm.depth == 8)
-		fprintf (stderr, "%s: min/max graylevel value = %d/%d\n",
-			 prog_name, min, max);
 	      if (status != SANE_STATUS_EOF)
+		  	fprintf (stderr, "%s: sanei_lm983x_read: %s\n",
+			   prog_name, sane_strstatus (status));
+				break;
+
 		{
-		  fprintf (stderr, "%s: sane_read: %s\n",
+		  fprintf (stderr, "%s: sanei_lm983x_read: %s\n",
 			   prog_name, sane_strstatus (status));
 		  return status;
 		}
 	      break;
-	    }
-
-	  if (must_buffer)
-	    {
-	      switch (parm.format)
+	  }
+		/* use offset constants to turn just-received buffer into RGB before
+			*	 writing to stream 
+			*/
+		u_int y;
+		u_int x; /* C89 ??? */
+		for( y=throw_away; y<scan_lines; y++)
 		{
-		case SANE_FRAME_RED:
-		case SANE_FRAME_GREEN:
-		case SANE_FRAME_BLUE:
-		  for (i = 0; i < len; ++i)
-		    {
-		      image.data[offset + 3 * i] = buffer[i];
-		      if (!advance (&image))
+			for( x=0; x < (img_width); x++)
 			{
-			  status = SANE_STATUS_NO_MEM;
-			  goto cleanup;
+				rgb_line[3*x]   = scan_buf[y * 3 * line_width + x + offset_r];
+				rgb_line[3*x+1] = scan_buf[y * 3 * line_width + x + offset_g];
+				rgb_line[3*x+2] = scan_buf[y * 3 * line_width + x + offset_b];
+
 			}
-		    }
-		  offset += 3 * len;
-		  break;
-
-		case SANE_FRAME_RGB:
-		  for (i = 0; i < len; ++i)
-		    {
-		      image.data[offset + i] = buffer[i];
-		      if (!advance (&image))
-			  {
-			    status = SANE_STATUS_NO_MEM;
-			    goto cleanup;
-			  }
-		    }
-		  offset += len;
-		  break;
-
-		case SANE_FRAME_GRAY:
-		  for (i = 0; i < len; ++i)
-		    {
-		      image.data[offset + i] = buffer[i];
-		      if (!advance (&image))
-			  {
-			    status = SANE_STATUS_NO_MEM;
-			    goto cleanup;
-			  }
-		    }
-		  offset += len;
-		  break;
-
-                default:
-		  break;
+			status = fwrite(rgb_line, 1, line_width, stdout);
+			fprintf(stderr,"wrote %i bytes to file\n",status);
+			img_height++;
+			
+			first_frame = 0;
 		}
-	    }
-	  else			/* ! must_buffer */
-	    {
-	      if ((output_format == OUTPUT_TIFF) || (parm.depth != 16))
-		fwrite (buffer, 1, len, stdout);
-	      else
-		{
-#if !defined(WORDS_BIGENDIAN)
-		  int i, start = 0;
-
-		  /* check if we have saved one byte from the last sane_read */
-		  if (hang_over > -1)
-		    {
-		      if (len > 0)
-			{
-			  fwrite (buffer, 1, 1, stdout);
-			  buffer[0] = (SANE_Byte) hang_over;
-			  hang_over = -1;
-			  start = 1;
-			}
-		    }
-		  /* now do the byte-swapping */
-		  for (i = start; i < (len - 1); i += 2)
-		    {
-		      unsigned char LSB;
-		      LSB = buffer[i];
-		      buffer[i] = buffer[i + 1];
-		      buffer[i + 1] = LSB;
-		    }
-		  /* check if we have an odd number of bytes */
-		  if (((len - start) % 2) != 0)
-		    {
-		      hang_over = buffer[len - 1];
-		      len--;
-		    }
-#endif
-		  fwrite (buffer, 1, len, stdout);
-		}
-	    }
-
-	  if (verbose && parm.depth == 8)
-	    {
-	      for (i = 0; i < len; ++i)
-		if (buffer[i] >= max)
-		  max = buffer[i];
-		else if (buffer[i] < min)
-		  min = buffer[i];
-	    }
-	}
-      first_frame = 0;
-    }
-  while (!parm.last_frame);
+}
 
   if (must_buffer)
     {
@@ -1474,7 +1365,6 @@ scan_it (void)
 	}
 #endif
 
-	fwrite (image.data, 1, image.height * image.width, stdout);
     }
 
   /* flush the output buffer */
@@ -1726,7 +1616,7 @@ main (int argc, char **argv)
     prog_name = argv[0];
 
   defdevname = getenv ("SANE_DEFAULT_DEVICE");
-
+ /* blerchin - change underlying code so it doesn't start bkgrd process */
   sane_init (&version_code, auth_callback);
 
   /* make a first pass through the options with error printing and argument
@@ -2297,7 +2187,6 @@ List of available devices:", prog_name);
 	      fclose (stdout);
 	      break;
 	    }
-
 	  /* write to .part file while scanning is in progress */
 	  if (batch && NULL == freopen (part_path, "w", stdout))
 	    {
