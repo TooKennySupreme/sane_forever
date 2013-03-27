@@ -323,7 +323,7 @@ auth_callback (SANE_String_Const resource,
 	       md5digest[12], md5digest[13], md5digest[14], md5digest[15]);
     }
 }
-/*forward declaration of write_pnm_header(), lazy and dangerou
+/*blerchin: forward declaration of write_pnm_header(), lazy and dangerous
 	because sighandler can be called at any point*/
 static void
 write_pnm_header (SANE_Frame format, int width, int height, int depth);
@@ -344,10 +344,13 @@ sighandler (int signum)
 				"You need to manually move it to front or process accordingly.\n"
 				"In case you're curious, the numbers are %i %u.\n",
 					prog_name, img_width, img_height);
+		fprintf(stdout, "###PNM_HEAD_START###\n");
 		write_pnm_header(SANE_FRAME_RGB, img_width, img_height, 255);
+		fprintf(stdout, "###PNM_HEAD_END###\n");
 	  fprintf (stderr, "%s: trying to stop scanner\n", prog_name);
 		drvclose(device);
 	  sane_cancel (device);
+		_exit(0);
 	}
       else
 	{
@@ -1222,13 +1225,10 @@ scan_it (void)
 	ScanDef *scan = &dev->scanning;
 	u_char *userBufBegin;
 
-	status=usbDev_Prepare( scanner->hw, scanner->buf );
 	
-	/*setup that would normally happen in reader_process(). Defining here to
-	 * avoid possiblity of goto cleanup changing definitions.
+	/* blerchin: setup that would normally happen in reader_process().
 	 */
-	fprintf(stderr,"calling usbDev_Prepare\n");
-	/* need to convert from line-wise RBG to byte-wise RGB */
+	usbDev_Prepare( scanner->hw, scanner->buf );
 
 
 
@@ -1276,111 +1276,44 @@ scan_it (void)
 
 	  fprintf (stderr, "%s: acquiring %s frame\n", prog_name,
 	   parm.format <= SANE_FRAME_BLUE ? format_name[parm.format]:"Unknown");
+		
+		/* for use in the header builder. not really necessary, but it works */
+		img_width = parm.pixels_per_line;
 	}
-	img_width = parm.pixels_per_line;
-	u_long line_width = img_width + 2; /*2 status bytes at end */
-	u_long scan_lines = 24;
-	u_long scan_len = scan_lines*3*line_width;
-	u_char* scan_buf[scan_len];
-	u_char* rgb_line[img_width*3]; 
-	u_int throw_away = 4;
-
-	u_long offset_r = 0;
-	u_long offset_g =	line_width;
-	u_long offset_b =  line_width * 2;
-
-#if 0
-	/* throw away one block */
-      while (1)
-	{
-	/* the important bit */
 
 
-			status = sanei_lm983x_read(
-							dev->fd,
-							0x00,  
-							(SANE_Byte *)scan_buf,// + ( y*img_width),
-							(SANE_Word)  scan_len,
-							SANE_FALSE);
-							fprintf(stderr,"read %lu bytes\n", scan_len);
-
-	  if (status != SANE_STATUS_GOOD)
-	    {
-	      if (status != SANE_STATUS_EOF)
-		  	fprintf (stderr, "%s: sanei_lm983x_read: %s\n",
-			   prog_name, sane_strstatus (status));
-				break;
-
-		{
-		  fprintf (stderr, "%s: sanei_lm983x_read: %s\n",
-			   prog_name, sane_strstatus (status));
-		  return status;
-		}
-	      break;
-	  }
-		/* use offset constants to turn just-received buffer into RGB before
-			*	 writing to stream 
-			*/
-		u_int y;
-		u_int x; /* C89 ??? */
-		for( y=throw_away; y<scan_lines; y++)
-		{
-			for( x=0; x < (img_width); x++)
-			{
-				rgb_line[3*x]   = scan_buf[y * 3 * line_width + x + offset_r];
-				rgb_line[3*x+1] = scan_buf[y * 3 * line_width + x + offset_g];
-				rgb_line[3*x+2] = scan_buf[y * 3 * line_width + x + offset_b];
-
-			}
-			status = fwrite(rgb_line, 1, line_width, stdout);
-			fprintf(stderr,"wrote %i bytes to file\n",status);
-			img_height++;
-			
-			first_frame = 0;
-		}
-	}
-#endif
 
 	/* on success, we read all data from the driver... */
 
 		if( !usb_InCalibrationMode(dev)) {
 
 			DBG( _DBG_INFO, "reader_process: READING....\n" );
-			SANE_Byte scan_line [scanner->params.bytes_per_line];
-			img_width = scan->sParam.Size.dwPixels;
 			userBufBegin = scanner->buf;
 
 
 			while(1){
-				int x;
-				// allocated buffer is not big enough, so we have to reset
-				// pointer occasionally.
-				/*if(scan->UserBuf.pb > (scan->dwLinesUser * scan->sParam.Size.dwPhyBytes)-1)
-				{
-					fprintf(stderr,"resetting UserBuf.pb\n");
-					*/
-				
-
 				status = usbDev_ReadLine( dev);
 
-				/*
-				for(x=0; x< (scanner->params.pixels_per_line); x++) {
-					scan_line[3*x] = scan->Red.pb[x];
-					scan_line[3*x + 1] = scan->Green.pb[x];
-					scan_line[3*x + 2] =  scan->Blue.pb[x];
-				}
-
-				fprintf(stderr, "RGB: %x %x %x\n",
-						scan->Red.pb[1023],scan->Green.pb[1023],scan->Blue.pb[1023]);
-				if((int)status < 0 ) {
-					break;
-				}
-				*/
 				status = fwrite(scanner->buf, 1, scanner->params.bytes_per_line, stdout );
-				fprintf( stderr, "wrote %i bytes to stdout\n"
-						"UserBuf.pb is %X\n",
-						status, scan->UserBuf.pb);
+				fprintf( stderr, "wrote %i bytes to stdout\n", status);
+
+				/*counter for the header file we will write at the end */
 				img_height++;
+
+			/** blerchin: the following are the two most important lines of my hack.
+			 * Without them the program will segfault in a minute or two.
+			 * UserBuf.pb is used by usb_ColorDuplicate8 in plustek-usbimg.c
+			 * Ordinarily it would be advanced within a buffer big enough for the
+			 * whole file. In our use case we have no way of knowing how big that
+			 * buffer would need to be (and it would probably be larger than
+			 * RAM). Things seem to be OK if we reset it every time we grab a
+			 * line.
+			 * 
+			 * dwTotalBytes is used by usb_ReadData, also in plustek-usbimg.c. It is
+			 * continuously decremented by bytes received from the scanner,
+			 * and at 0 no more date is downloaded. It really only needs to hold
+			 * ~20 lines of data if we keep resetting it, but this is more fun.
+			 **/
 				scan->UserBuf.pb = userBufBegin;
 				scan->sParam.Size.dwTotalBytes = 16777216;
 			
@@ -1667,7 +1600,9 @@ main (int argc, char **argv)
     prog_name = argv[0];
 
   defdevname = getenv ("SANE_DEFAULT_DEVICE");
- /* blerchin - change underlying code so it doesn't start bkgrd process */
+ /* blerchin - changed underlying code in backend/plustek.c
+	*	so it doesn't start bkgrd process 
+	*/
   sane_init (&version_code, auth_callback);
 
   /* make a first pass through the options with error printing and argument

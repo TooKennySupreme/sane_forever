@@ -1966,8 +1966,7 @@ sane_control_option( SANE_Handle handle, SANE_Int option,
 
 		case SANE_ACTION_SET_VALUE:
 			status = sanei_constrain_value( s->opt + option, value, info );
-			/*blerchin*/
-			/*fprintf(stderr,"value after constraint is: %u",value);*/
+			/*blerchin: size constraints happen here*/
 			if( SANE_STATUS_GOOD != status )
 				return status;
 
@@ -2623,13 +2622,14 @@ sane_start( SANE_Handle handle )
 		usbDev_close( dev );
 		return SANE_STATUS_IO_ERROR;
 	}
-/* blerchin do not create reader process */
 
 	/* create reader routine as new process */
 	s->bytes_read    = 0;
 	s->r_pipe        = fds[0];
 	s->w_pipe        = fds[1];
 	s->ipc_read_done = SANE_FALSE;
+
+	/* blerchin do not create reader process */
 	/*s->reader_pid    = sanei_thread_begin( reader_process, s );*/
 
 	cancelRead = SANE_FALSE;
