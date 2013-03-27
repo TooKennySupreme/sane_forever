@@ -1306,8 +1306,10 @@ usb_SetScanParameters( Plustek_Device *dev, ScanParam *pParam )
 			                                 hw->wMotorDpi / pParam->PhyDpi.y);
 			DBG( _DBG_INFO, "* Scansteps=%u (%lu*%u/%u)\n", scansteps,  lines,
 			                hw->wMotorDpi, pParam->PhyDpi.y );
-			regs[0x4c] = _HIBYTE(scansteps);
-			regs[0x4d] = _LOBYTE(scansteps);
+			/*blerchin*/
+			/*scan will not stop until it's told to do so!*/
+			regs[0x4c] = 0x00;
+			regs[0x4d] = 0x00;
 		}
 	}
 
@@ -1562,6 +1564,7 @@ usb_ScanReadImage( Plustek_Device *dev, void *pBuf, u_long dwSize )
 	}
 #endif
 	res = sanei_lm983x_read(dev->fd, 0x00, (u_char *)pBuf, dwSize, SANE_FALSE);
+	fprintf(stderr, "pBuf[1023]: %x\n", *((u_char *)pBuf+1023));
 
 	/* check for pressed ESC button, as sanei_lm983x_read() may take some time
 	 */

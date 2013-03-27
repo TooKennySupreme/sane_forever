@@ -1437,6 +1437,7 @@ usbDev_ReadLine( Plustek_Device *dev )
 			return _E_ABORT;
 		}
 
+		fprintf(stderr,"about to process\n");
 		if( !(scan->dwFlag & SCANFLAG_SampleY))	{
 
 			scan->pfnProcess( dev );
@@ -1459,6 +1460,7 @@ usbDev_ReadLine( Plustek_Device *dev )
 				scan->dwLinesUser--;
 			}
 		}
+		fprintf(stderr,"finished processing\n");
 
 		/* Adjust get buffer pointers */
 		wrap = 0;
@@ -1504,6 +1506,7 @@ usbDev_ReadLine( Plustek_Device *dev )
 				scan->Green.pb = scan->pbScanBufBegin + len;
 				scan->Blue.pb  = scan->pbScanBufBegin + len * 2UL;
 			}
+			fprintf(stderr,"completed wrap\n");
 		}
 
 		/* line processed, check if we have to get more...
@@ -1511,6 +1514,7 @@ usbDev_ReadLine( Plustek_Device *dev )
 		scan->dwLinesToProcess--;
 
 		if( 0 == scan->dwLinesToProcess ) {
+			fprintf(stderr,"about to usb_ReadData()\n");
 
 			scan->dwLinesToProcess = usb_ReadData( dev );
 			if( 0 == scan->dwLinesToProcess ) {

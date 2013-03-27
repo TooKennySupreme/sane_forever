@@ -1220,8 +1220,10 @@ scan_it (void)
 	Plustek_Scanner *scanner = (Plustek_Scanner *)device;
 	Plustek_Device  *dev = scanner->hw;
 	ScanDef *scan = &dev->scanning;
+	u_char *userBufBegin;
 
 	status=usbDev_Prepare( scanner->hw, scanner->buf );
+	
 	/*setup that would normally happen in reader_process(). Defining here to
 	 * avoid possiblity of goto cleanup changing definitions.
 	 */
@@ -1287,6 +1289,7 @@ scan_it (void)
 	u_long offset_g =	line_width;
 	u_long offset_b =  line_width * 2;
 
+#if 0
 	/* throw away one block */
       while (1)
 	{
@@ -1335,7 +1338,55 @@ scan_it (void)
 			
 			first_frame = 0;
 		}
-}
+	}
+#endif
+
+	/* on success, we read all data from the driver... */
+
+		if( !usb_InCalibrationMode(dev)) {
+
+			DBG( _DBG_INFO, "reader_process: READING....\n" );
+			SANE_Byte scan_line [scanner->params.bytes_per_line];
+			img_width = scan->sParam.Size.dwPixels;
+			userBufBegin = scanner->buf;
+
+
+			while(1){
+				int x;
+				// allocated buffer is not big enough, so we have to reset
+				// pointer occasionally.
+				/*if(scan->UserBuf.pb > (scan->dwLinesUser * scan->sParam.Size.dwPhyBytes)-1)
+				{
+					fprintf(stderr,"resetting UserBuf.pb\n");
+					*/
+				
+
+				status = usbDev_ReadLine( dev);
+
+				/*
+				for(x=0; x< (scanner->params.pixels_per_line); x++) {
+					scan_line[3*x] = scan->Red.pb[x];
+					scan_line[3*x + 1] = scan->Green.pb[x];
+					scan_line[3*x + 2] =  scan->Blue.pb[x];
+				}
+
+				fprintf(stderr, "RGB: %x %x %x\n",
+						scan->Red.pb[1023],scan->Green.pb[1023],scan->Blue.pb[1023]);
+				if((int)status < 0 ) {
+					break;
+				}
+				*/
+				status = fwrite(scanner->buf, 1, scanner->params.bytes_per_line, stdout );
+				fprintf( stderr, "wrote %i bytes to stdout\n"
+						"UserBuf.pb is %X\n",
+						status, scan->UserBuf.pb);
+				img_height++;
+				scan->UserBuf.pb = userBufBegin;
+				scan->sParam.Size.dwTotalBytes = 16777216;
+			
+				first_frame = 0;
+			}
+		}
 
   if (must_buffer)
     {

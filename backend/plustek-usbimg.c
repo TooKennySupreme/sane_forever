@@ -349,6 +349,8 @@ static void usb_ColorDuplicate8( Plustek_Device *dev )
 	u_long   dw, pixels;
 	ScanDef *scan = &dev->scanning;
 
+	fprintf(stderr, "called usb_ColorDuplicate\n");
+
 	usb_AverageColorByte( dev );
 
 	if( scan->sParam.bSource == SOURCE_ADF ) {
@@ -364,6 +366,7 @@ static void usb_ColorDuplicate8( Plustek_Device *dev )
 		scan->UserBuf.pb_rgb[pixels].Red   = scan->Red.pcb[dw].a_bColor[0];
 		scan->UserBuf.pb_rgb[pixels].Green = scan->Green.pcb[dw].a_bColor[0];
 		scan->UserBuf.pb_rgb[pixels].Blue  = scan->Blue.pcb[dw].a_bColor[0];
+		//fprintf(stderr,"red: %02x\n",scan->UserBuf.pb_rgb[pixels].Red);
 	}
 }
 
@@ -1905,6 +1908,7 @@ static SANE_Int usb_ReadData( Plustek_Device *dev )
 	pl = dev->usbDev.a_bRegs[0x4e] * hw->wDRAMSize/128;
 
 	while( scan->sParam.Size.dwTotalBytes ) {
+		fprintf(stderr,"dwTotalBytes: %lu\n",scan->sParam.Size.dwTotalBytes);
 
 		if( usb_IsEscPressed()) {
 			DBG( _DBG_INFO, "usb_ReadData() - Cancel detected...\n" );
@@ -1968,11 +1972,15 @@ static SANE_Int usb_ReadData( Plustek_Device *dev )
 
 				dwRet = dw / scan->sParam.Size.dwPhyBytes;
 			}
+				fprintf(stderr, "pbGetDataBuf[1023]: %x\n",
+						scan->pbGetDataBuf[1023]);
 
 			scan->pbGetDataBuf += scan->dwBytesScanBuf;
 			if( scan->pbGetDataBuf >= scan->pbScanBufEnd ) {
 				scan->pbGetDataBuf = scan->pbScanBufBegin;
 			}
+				fprintf(stderr, "pbGetDataBuf[1023]: %x\n",
+						scan->pbGetDataBuf[1023]);
 
 			if( dwRet )
 				return dwRet;

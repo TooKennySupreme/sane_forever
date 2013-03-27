@@ -848,8 +848,6 @@ init_options( Plustek_Scanner *s )
 	s->opt[OPT_BR_Y].unit  = SANE_UNIT_MM;
 	s->opt[OPT_BR_Y].constraint_type  = SANE_CONSTRAINT_RANGE;
 	s->opt[OPT_BR_Y].constraint.range = &s->hw->y_range;
-	/*blerchin*/
-	s->opt[OPT_BR_Y].constraint.range = 10000;
 	s->val[OPT_BR_Y].w = SANE_FIX(_DEFAULT_BRY);
 
 	/* "Enhancement" group: */
@@ -1355,9 +1353,7 @@ attach( const char *dev_name, CnfDef *cnf, Plustek_Device **devp )
 	DBG( _DBG_INFO, "Flags  : 0x%08lx\n", dev->caps.dwFlag  );
 
 	dev->max_x = dev->caps.wMaxExtentX*MM_PER_INCH/_MEASURE_BASE;
-	/*blerchin
-		dev->max_y = dev->caps.wMaxExtentY*MM_PER_INCH/_MEASURE_BASE;*/
-	 dev->max_y = 10000;
+	dev->max_y = dev->caps.wMaxExtentY*MM_PER_INCH/_MEASURE_BASE;
 	
 
 	/* calculate the size of the resolution list +
@@ -1384,9 +1380,7 @@ attach( const char *dev_name, CnfDef *cnf, Plustek_Device **devp )
 	dev->dpi_range.min = _DEF_DPI;
 	dev->dpi_range.max = dev->usbDev.Caps.OpticDpi.x * 2;
 	dev->x_range.max   = SANE_FIX(dev->max_x);
-	/*blerchin
-		dev->y_range.max   = SANE_FIX(dev->max_y);*/
-	dev->y_range.max = 10000;
+	dev->y_range.max   = SANE_FIX(dev->max_y);
 
 	dev->fd = handle;
 	drvclose( dev );
@@ -1971,8 +1965,9 @@ sane_control_option( SANE_Handle handle, SANE_Int option,
 		break;
 
 		case SANE_ACTION_SET_VALUE:
-			//status = sanei_constrain_value( s->opt + option, value, info );
-			fprintf(stderr,"value after constraint is: %u",value);
+			status = sanei_constrain_value( s->opt + option, value, info );
+			/*blerchin*/
+			/*fprintf(stderr,"value after constraint is: %u",value);*/
 			if( SANE_STATUS_GOOD != status )
 				return status;
 
@@ -2628,16 +2623,17 @@ sane_start( SANE_Handle handle )
 		usbDev_close( dev );
 		return SANE_STATUS_IO_ERROR;
 	}
+/* blerchin do not create reader process */
 
 	/* create reader routine as new process */
 	s->bytes_read    = 0;
 	s->r_pipe        = fds[0];
 	s->w_pipe        = fds[1];
 	s->ipc_read_done = SANE_FALSE;
-	s->reader_pid    = sanei_thread_begin( reader_process, s );
+	/*s->reader_pid    = sanei_thread_begin( reader_process, s );*/
 
 	cancelRead = SANE_FALSE;
-	
+/*	
 	if( s->reader_pid == -1 ) {
 		DBG( _DBG_ERROR, "ERROR: could not start reader task\n" );
 		s->scanning = SANE_FALSE;
@@ -2651,7 +2647,7 @@ sane_start( SANE_Handle handle )
 		close( s->w_pipe );
 		s->w_pipe = -1;
 	}
-
+*/
 	DBG( _DBG_SANE_INIT, "sane_start done\n" );
 	return SANE_STATUS_GOOD;
 }
